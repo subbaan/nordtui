@@ -4,7 +4,7 @@ A keyboard-driven terminal UI for switching NordVPN locations quickly.
 
 The NordVPN GUI keeps only a tiny recent-node list and makes browsing locations slow. nordtui gives you a two-pane interface: your saved and recent locations on the left for fast reconnects, and a searchable full location list on the right.
 
-![version](https://img.shields.io/badge/version-0.1.10-blue)
+![version](https://img.shields.io/badge/version-0.1.11-blue)
 
 ![nordtui main view](images/nordtui01.png)
 ![nordtui filter in use](images/nordtui02.png)
@@ -12,7 +12,7 @@ The NordVPN GUI keeps only a tiny recent-node list and makes browsing locations 
 ## Layout
 
 ```
-┌─ NordVPN TUI  v0.1.10 ─────────────────────────────────────────┐
+┌─ NordVPN TUI  v0.1.11 ─────────────────────────────────────────┐
 ├─────────────────────────┬──────────────────────────────────────┤
 │ Saved                   │ Filter:                              │
 │                         │                                      │

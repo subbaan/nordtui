@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const version = "0.1.10"
+const version = "0.1.11"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -519,7 +519,6 @@ type model struct {
 	config      Config
 	recents     []RecentItem
 	cache       Cache
-	advanced     bool
 	showGroups   bool
 	groupDrill   *Target
 	drillTargets []Target
@@ -718,21 +717,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Specialty servers hidden"
 		}
 		return m, nil
-	case "a":
-		m.advanced = !m.advanced
-		if m.advanced {
-			m.status = "Advanced mode ON"
-		} else {
-			m.status = "Advanced mode OFF"
-		}
-		return m, nil
 	case "ctrl+r":
 		m.status = "Refreshing location cache…"
 		return m, cmdFetchCache()
 	case "ctrl+d":
 		return m.deleteRecent(), nil
 	case "?":
-		m.status = "Enter:connect  Tab:pane  f:★  d:disc  r:reconnect  g:groups  a:adv  Ctrl+R:refresh  Ctrl+D:del  q:quit"
+		m.status = "Enter:connect  Tab:pane  f:★  d:disc  r:reconnect  g:groups  Ctrl+R:refresh  Ctrl+D:del  q:quit"
 		return m, nil
 	case "q":
 		return m, tea.Quit
@@ -1020,15 +1011,11 @@ func (m model) View() string {
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, savedPane, locsPane)
 
 	// Status bar
-	adv := ""
-	if m.advanced {
-		adv = "  [ADV]"
-	}
-	status := styleStatus.Width(m.width).Render(m.status + adv)
+	status := styleStatus.Width(m.width).Render(m.status)
 
 	// Help line
 	help := styleHelp.Render(
-		" Enter:connect  Tab:switch  f:★  d:disc  r:reconnect  g:groups  a:adv  Ctrl+R:refresh  q:quit",
+		" Enter:connect  Tab:switch  f:★  d:disc  r:reconnect  g:groups  Ctrl+R:refresh  q:quit",
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, title, panes, status, help)
