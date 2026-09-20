@@ -4,7 +4,7 @@ A keyboard-driven terminal UI for switching NordVPN locations quickly.
 
 The NordVPN GUI keeps only a tiny recent-node list and makes browsing locations slow. nordtui gives you a two-pane interface: your saved and recent locations on the left for fast reconnects, and a searchable full location list on the right.
 
-![version](https://img.shields.io/badge/version-0.1.11-blue)
+![version](https://img.shields.io/badge/version-0.1.12-blue)
 
 ![nordtui main view](images/nordtui01.png)
 ![nordtui filter in use](images/nordtui02.png)
@@ -12,7 +12,7 @@ The NordVPN GUI keeps only a tiny recent-node list and makes browsing locations 
 ## Layout
 
 ```
-┌─ NordVPN TUI  v0.1.11 ─────────────────────────────────────────┐
+┌─ NordVPN TUI  v0.1.12 ─────────────────────────────────────────┐
 ├─────────────────────────┬──────────────────────────────────────┤
 │ Saved                   │ Filter:                              │
 │                         │                                      │
@@ -22,15 +22,17 @@ The NordVPN GUI keeps only a tiny recent-node list and makes browsing locations 
 │ ★ Switzerland, fastest  │   Dedicated IP                       │
 │                         │ > Quick connect                      │
 │ ── Recent               │   Albania, fastest                   │
-│ > Germany / Berlin      │   Australia, fastest                 │
+│ > Germany / Berlin      │ ● United Kingdom, fastest            │
 │   Sweden, fastest       │   ...                                │
 ├─────────────────────────┴──────────────────────────────────────┤
-│ Status: Connected, United Kingdom / Manchester                 │
+│ ● Connected — United Kingdom / Manchester (uk1234)             │
 │ Enter connect  Tab switch  f:★  d:disc  g:groups  q quit       │
 └────────────────────────────────────────────────────────────────┘
 ```
 
 Startup focus lands on the Saved pane so the most common workflow — reconnect to a recent node — is a single keypress.
+
+The status bar always retains the current VPN connection while temporary notices are shown. A green `●` also marks the connected country and, when available, its exact city in the location and saved lists.
 
 ## Requirements
 
@@ -42,9 +44,9 @@ Startup focus lands on the Saved pane so the most common workflow — reconnect 
 
 ```sh
 git clone https://github.com/subbaan/nordtui
-cd nordtui/nordtui
-go build -o nordtui .
-cp nordtui ~/.local/bin/nordtui
+cd nordtui
+make build
+cp nordtui-bin ~/.local/bin/nordtui
 ```
 
 Or grab the binary from [Releases](../../releases).

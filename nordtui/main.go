@@ -9,13 +9,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-const version = "0.1.11"
+const version = "0.1.12"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -93,7 +94,16 @@ const (
 // ── Messages ───────────────────────────────────────────────────────────────────
 
 type msgCheck struct{ cliOK, loggedIn bool }
-type msgStatus string
+type vpnStatus struct {
+	text      string
+	known     bool
+	connected bool
+	country   string
+	city      string
+	hostname  string
+}
+
+type msgStatus vpnStatus
 type msgConnectResult string
 type msgDisconnectResult string
 type msgCacheLoaded struct {
@@ -132,6 +142,10 @@ var (
 			Foreground(lipgloss.Color("250")).
 			Padding(0, 1)
 
+	styleConnected = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("42")).
+			Bold(true)
+
 	styleTitle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("86"))
@@ -143,10 +157,10 @@ var (
 // ── Specialty groups ───────────────────────────────────────────────────────────
 
 var specialtyGroups = []Target{
-	{Type: tGroup, Label: "Double VPN",     Group: "Double_VPN"},
+	{Type: tGroup, Label: "Double VPN", Group: "Double_VPN"},
 	{Type: tGroup, Label: "Onion over VPN", Group: "Onion_Over_VPN"},
-	{Type: tGroup, Label: "P2P",            Group: "P2P"},
-	{Type: tGroup, Label: "Dedicated IP",   Group: "Dedicated_IP"},
+	{Type: tGroup, Label: "P2P", Group: "P2P"},
+	{Type: tGroup, Label: "Dedicated IP", Group: "Dedicated_IP"},
 }
 
 // groupCountries lists the countries available for each specialty group.
@@ -165,12 +179,12 @@ var groupCountries = map[string][]string{
 
 var aliases = map[string]string{
 	"uk": "united kingdom", "gb": "united kingdom",
-	"nl": "netherlands",    "de": "germany",
-	"ch": "switzerland",    "us": "united states",
-	"fr": "france",         "se": "sweden",
-	"no": "norway",         "dk": "denmark",
-	"jp": "japan",          "au": "australia",
-	"ca": "canada",         "sg": "singapore",
+	"nl": "netherlands", "de": "germany",
+	"ch": "switzerland", "us": "united states",
+	"fr": "france", "se": "sweden",
+	"no": "norway", "dk": "denmark",
+	"jp": "japan", "au": "australia",
+	"ca": "canada", "sg": "singapore",
 }
 
 // ── XDG paths ──────────────────────────────────────────────────────────────────
@@ -317,13 +331,17 @@ func cmdStatus() tea.Cmd {
 	return func() tea.Msg {
 		out, err := exec.Command("nordvpn", "status").Output()
 		if err != nil {
-			return msgStatus("Status unavailable")
+			return msgStatus{text: "Status unavailable"}
 		}
-		return msgStatus(parseStatusOutput(string(out)))
+		return msgStatus(parseVPNStatus(string(out)))
 	}
 }
 
 func parseStatusOutput(out string) string {
+	return parseVPNStatus(out).text
+}
+
+func parseVPNStatus(out string) vpnStatus {
 	fields := make(map[string]string)
 	for _, line := range strings.Split(out, "\n") {
 		idx := strings.Index(line, ":")
@@ -349,16 +367,23 @@ func parseStatusOutput(out string) string {
 		if host := fields["hostname"]; host != "" {
 			parts = append(parts, "("+host+")")
 		}
-		return strings.Join(parts, " — ")
+		return vpnStatus{
+			text:      strings.Join(parts, " — "),
+			known:     true,
+			connected: true,
+			country:   fields["country"],
+			city:      fields["city"],
+			hostname:  fields["hostname"],
+		}
 	case "disconnected":
-		return "Disconnected"
+		return vpnStatus{text: "Disconnected", known: true}
 	case "":
 		lines := strings.Split(strings.TrimSpace(out), "\n")
 		if len(lines) > 0 {
-			return lines[0]
+			return vpnStatus{text: lines[0]}
 		}
 	}
-	return "Status: " + fields["status"]
+	return vpnStatus{text: "Status: " + fields["status"], known: true}
 }
 
 func cmdConnect(t Target) tea.Cmd {
@@ -507,25 +532,26 @@ func buildSaved(cfg Config, recents []RecentItem) []savedEntry {
 // ── Model ──────────────────────────────────────────────────────────────────────
 
 type model struct {
-	filter      textinput.Model
-	focus       focusArea
-	allTargets  []Target
-	filtTargets []Target
-	locsIdx     int
-	locsOffset  int
+	filter       textinput.Model
+	focus        focusArea
+	allTargets   []Target
+	filtTargets  []Target
+	locsIdx      int
+	locsOffset   int
 	savedEntries []savedEntry
-	savedIdx    int
-	savedOffset int
-	config      Config
-	recents     []RecentItem
-	cache       Cache
+	savedIdx     int
+	savedOffset  int
+	config       Config
+	recents      []RecentItem
+	cache        Cache
 	showGroups   bool
 	groupDrill   *Target
 	drillTargets []Target
 	lastConn     *Target
-	status      string
-	width       int
-	height      int
+	vpn          vpnStatus
+	status       string
+	width        int
+	height       int
 }
 
 func newModel() model {
@@ -598,7 +624,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmdStatus()
 
 	case msgStatus:
-		m.status = string(msg)
+		status := vpnStatus(msg)
+		if status.known {
+			m.vpn = status
+			m.status = ""
+		} else {
+			m.status = status.text
+		}
 		return m, nil
 
 	case msgConnectResult:
@@ -830,6 +862,33 @@ func (m model) selectedTarget() *Target {
 	return nil
 }
 
+func canonicalLocation(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, s)
+}
+
+// targetIsConnected marks the country row for every connection and, when the
+// CLI reports it, the exact city row as well.
+func (m model) targetIsConnected(t Target) bool {
+	if !m.vpn.connected || t.Country == "" ||
+		canonicalLocation(t.Country) != canonicalLocation(m.vpn.country) {
+		return false
+	}
+
+	switch t.Type {
+	case tCountry, tGroup:
+		return true
+	case tCity:
+		return m.vpn.city != "" && canonicalLocation(t.City) == canonicalLocation(m.vpn.city)
+	default:
+		return false
+	}
+}
+
 func (m model) doConnect() (model, tea.Cmd) {
 	t := m.selectedTarget()
 	if t == nil {
@@ -1011,7 +1070,7 @@ func (m model) View() string {
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, savedPane, locsPane)
 
 	// Status bar
-	status := styleStatus.Width(m.width).Render(m.status)
+	status := styleStatus.Width(m.width).Render(m.renderStatus())
 
 	// Help line
 	help := styleHelp.Render(
@@ -1019,6 +1078,25 @@ func (m model) View() string {
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, title, panes, status, help)
+}
+
+func (m model) renderStatus() string {
+	var connection string
+	if m.vpn.known {
+		if m.vpn.connected {
+			connection = styleConnected.Render("● " + m.vpn.text)
+		} else {
+			connection = "○ " + m.vpn.text
+		}
+	}
+
+	if connection == "" {
+		return m.status
+	}
+	if m.status == "" {
+		return connection
+	}
+	return connection + "  •  " + m.status
 }
 
 func (m model) renderLocs(outerW, listH int) string {
@@ -1041,15 +1119,23 @@ func (m model) renderLocs(outerW, listH int) string {
 	}
 
 	for i := m.locsOffset; i < end; i++ {
-		label := m.filtTargets[i].Label
-		line := truncate("  "+label, innerW)
+		target := m.filtTargets[i]
+		label := target.Label
+		connected := m.targetIsConnected(target)
+		marker := "  "
+		if connected {
+			marker = "● "
+		}
+		line := truncate("  "+marker+label, innerW)
 		if i == m.locsIdx {
-			line = truncate("> "+label, innerW)
+			line = truncate("> "+marker+label, innerW)
 			if m.focus == focusLocs {
 				line = styleCursor.Render(line)
 			} else {
 				line = styleDimCursor.Render(line)
 			}
+		} else if connected {
+			line = styleConnected.Render(line)
 		}
 		sb.WriteString(line + "\n")
 	}
@@ -1083,13 +1169,18 @@ func (m model) renderSaved(outerW, listH int) string {
 	for i := m.savedOffset; i < end; i++ {
 		e := m.savedEntries[i]
 		var line string
+		connected := !e.header && m.targetIsConnected(e.target)
+		marker := " "
+		if connected {
+			marker = "●"
+		}
 		switch {
 		case e.header:
 			line = styleSection.Render(truncate(e.text, innerW))
 		case i == m.savedIdx:
-			prefix := "> "
+			prefix := "> " + marker + " "
 			if e.starred {
-				prefix = ">★ "
+				prefix = ">★" + marker + " "
 			}
 			if m.focus == focusSaved {
 				line = styleCursor.Render(truncate(prefix+e.target.Label, innerW))
@@ -1098,8 +1189,13 @@ func (m model) renderSaved(outerW, listH int) string {
 			}
 		case e.starred:
 			star := styleStar.Render("★")
-			rest := truncate(e.target.Label, innerW-4)
-			line = "  " + star + " " + rest
+			rest := truncate(marker+" "+e.target.Label, innerW-4)
+			line = "  " + star + rest
+			if connected {
+				line = styleConnected.Render(line)
+			}
+		case connected:
+			line = styleConnected.Render(truncate("  ● "+e.target.Label, innerW))
 		default:
 			line = truncate("    "+e.target.Label, innerW)
 		}
@@ -1118,13 +1214,24 @@ func (m model) renderSaved(outerW, listH int) string {
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	if lipgloss.Width(s) <= max {
 		return s
 	}
 	if max < 1 {
 		return ""
 	}
-	return s[:max-1] + "…"
+
+	var result strings.Builder
+	width := 0
+	for _, r := range s {
+		runeWidth := lipgloss.Width(string(r))
+		if width+runeWidth >= max {
+			break
+		}
+		result.WriteRune(r)
+		width += runeWidth
+	}
+	return result.String() + "…"
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────

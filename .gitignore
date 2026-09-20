@@ -1,4 +1,5 @@
 nordtui/nordtui
+/nordtui-bin
 .claude/
 .update.ini
 requirements.txt
