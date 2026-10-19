@@ -16,7 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-const version = "0.1.12"
+const version = "0.1.13"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -73,6 +73,7 @@ type Cache struct {
 	UpdatedAt string              `json:"updated_at"`
 	Countries []string            `json:"countries"`
 	Cities    map[string][]string `json:"cities"`
+	Groups    []string            `json:"groups"`
 }
 
 // savedEntry is one row in the right pane — either a section header or a target.
@@ -101,6 +102,7 @@ type vpnStatus struct {
 	country   string
 	city      string
 	hostname  string
+	group     string
 }
 
 type msgStatus vpnStatus
@@ -109,6 +111,7 @@ type msgDisconnectResult string
 type msgCacheLoaded struct {
 	countries []string
 	cities    map[string][]string
+	groups    []string
 }
 type msgErr string
 
@@ -156,11 +159,39 @@ var (
 
 // ── Specialty groups ───────────────────────────────────────────────────────────
 
+// specialtyGroups is the display order and labels for groups nordtui offers.
+// Only groups that `nordvpn groups` reports are shown; the CLI changes this set
+// between releases (6.0 drops P2P and renames Obfuscated_Servers to Obfuscated).
 var specialtyGroups = []Target{
 	{Type: tGroup, Label: "Double VPN", Group: "Double_VPN"},
 	{Type: tGroup, Label: "Onion over VPN", Group: "Onion_Over_VPN"},
 	{Type: tGroup, Label: "P2P", Group: "P2P"},
 	{Type: tGroup, Label: "Dedicated IP", Group: "Dedicated_IP"},
+	{Type: tGroup, Label: "Obfuscated", Group: "Obfuscated"},
+	{Type: tGroup, Label: "Obfuscated", Group: "Obfuscated_Servers"},
+}
+
+// defaultSpecialtyGroups is used until the CLI's group list has been fetched.
+var defaultSpecialtyGroups = []string{"Double_VPN", "Onion_Over_VPN", "Dedicated_IP"}
+
+// p2pRetiredMsg is what nordvpn 6.0+ prints when connecting to the removed P2P group.
+const p2pRetiredMsg = "p2p group is no longer available"
+
+func availableSpecialtyGroups(groups []string) []Target {
+	if len(groups) == 0 {
+		groups = defaultSpecialtyGroups
+	}
+	have := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		have[strings.ToLower(g)] = true
+	}
+	var targets []Target
+	for _, g := range specialtyGroups {
+		if have[strings.ToLower(g.Group)] {
+			targets = append(targets, g)
+		}
+	}
+	return targets
 }
 
 // groupCountries lists the countries available for each specialty group.
@@ -291,20 +322,22 @@ func loadCache() Cache {
 	return c
 }
 
-func saveCache(countries []string, cities map[string][]string) {
+func saveCache(countries []string, cities map[string][]string, groups []string) {
 	os.MkdirAll(xdgState(), 0o755)
 	c := Cache{
 		Version:   version,
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 		Countries: countries,
 		Cities:    cities,
+		Groups:    groups,
 	}
 	data, _ := json.MarshalIndent(c, "", "  ")
 	os.WriteFile(filepath.Join(xdgState(), "cache.json"), data, 0o644)
 }
 
 func cacheIsStale(c Cache) bool {
-	if c.UpdatedAt == "" {
+	// Caches written before group discovery lack the groups list.
+	if c.UpdatedAt == "" || c.Groups == nil {
 		return true
 	}
 	t, err := time.Parse(time.RFC3339, c.UpdatedAt)
@@ -357,6 +390,9 @@ func parseVPNStatus(out string) vpnStatus {
 	switch strings.ToLower(fields["status"]) {
 	case "connected":
 		parts := []string{"Connected"}
+		if group := fields["group"]; group != "" {
+			parts = append(parts, group)
+		}
 		if country := fields["country"]; country != "" {
 			loc := country
 			if city := fields["city"]; city != "" {
@@ -374,6 +410,7 @@ func parseVPNStatus(out string) vpnStatus {
 			country:   fields["country"],
 			city:      fields["city"],
 			hostname:  fields["hostname"],
+			group:     fields["group"],
 		}
 	case "disconnected":
 		return vpnStatus{text: "Disconnected", known: true}
@@ -388,11 +425,26 @@ func parseVPNStatus(out string) vpnStatus {
 
 func cmdConnect(t Target) tea.Cmd {
 	return func() tea.Msg {
-		args := t.cliArgs()
-		out, _ := exec.Command("nordvpn", args...).CombinedOutput()
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		return msgConnectResult(lines[0])
+		out, _ := exec.Command("nordvpn", t.cliArgs()...).CombinedOutput()
+		if t.Type == tGroup && strings.EqualFold(t.Group, "P2P") &&
+			strings.Contains(strings.ToLower(string(out)), p2pRetiredMsg) {
+			// nordvpn 6.0+ removed the P2P group; every server supports P2P now.
+			out, _ = exec.Command("nordvpn", p2pFallbackArgs(t)...).CombinedOutput()
+			return msgConnectResult("P2P group retired, using standard servers — " + firstLine(string(out)))
+		}
+		return msgConnectResult(firstLine(string(out)))
 	}
+}
+
+func p2pFallbackArgs(t Target) []string {
+	if t.Country != "" {
+		return Target{Type: tCountry, Country: t.Country}.cliArgs()
+	}
+	return Target{Type: tQuick}.cliArgs()
+}
+
+func firstLine(out string) string {
+	return strings.Split(strings.TrimSpace(out), "\n")[0]
 }
 
 func cmdDisconnect() tea.Cmd {
@@ -422,8 +474,12 @@ func cmdFetchCache() tea.Cmd {
 				}
 			}
 		}
-		saveCache(countries, cities)
-		return msgCacheLoaded{countries: countries, cities: cities}
+		groups := []string{}
+		if gout, gerr := exec.Command("nordvpn", "groups").Output(); gerr == nil {
+			groups = parseNvpnList(string(gout))
+		}
+		saveCache(countries, cities, groups)
+		return msgCacheLoaded{countries: countries, cities: cities, groups: groups}
 	}
 }
 
@@ -465,7 +521,7 @@ func buildGroupCountryTargets(g Target, fallback []string) []Target {
 func buildLocations(cache Cache, showGroups bool) []Target {
 	var targets []Target
 	if showGroups {
-		targets = append(targets, specialtyGroups...)
+		targets = append(targets, availableSpecialtyGroups(cache.Groups)...)
 	}
 	targets = append(targets, Target{Type: tQuick, Label: "Quick connect"})
 	for _, country := range cache.Countries {
@@ -642,7 +698,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmdStatus()
 
 	case msgCacheLoaded:
-		m.cache = Cache{Countries: msg.countries, Cities: msg.cities}
+		m.cache = Cache{Countries: msg.countries, Cities: msg.cities, Groups: msg.groups}
 		m.groupDrill = nil
 		m.drillTargets = nil
 		m.allTargets = buildLocations(m.cache, m.showGroups)
@@ -1239,7 +1295,7 @@ func truncate(s string, max int) string {
 func main() {
 	for _, arg := range os.Args[1:] {
 		switch arg {
-		case "-v", "--version":
+		case "-V", "-v", "--version":
 			fmt.Println(version)
 			return
 		case "-h", "--help":
@@ -1248,7 +1304,7 @@ func main() {
 			fmt.Println()
 			fmt.Println("Options:")
 			fmt.Println("  -h, --help     Show this help and exit")
-			fmt.Println("  -v, --version  Print version and exit")
+			fmt.Println("  -V, --version  Print version and exit")
 			fmt.Println()
 			fmt.Println("Navigation:")
 			fmt.Println("  Tab            Cycle focus: Recent/Saved → Filter → Locations")
